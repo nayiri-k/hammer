@@ -43,14 +43,14 @@ class PowerParser():
         timescaling = TimeValue("1ns").value_in_units(time_unit,round_zeroes=False)
         time_ns = np.round(np.array([float(l[0]) for l in time_power]) / timescaling).astype(int)
         powerscaling = PowerValue("1mW").value_in_units(power_unit,round_zeroes=False)
-        power = np.round(np.array([[float(p) for p in l[1:]] for l in time_power]) / powerscaling)
+        power = np.array([[float(p) for p in l[1:]] for l in time_power]) / powerscaling
 
         # generate index
         fp_start = Path(str(joules_fpath).split('.profile.')[0]+'.frames.start_times.txt')
         fp_end = Path(str(joules_fpath).split('.profile.')[0]+'.frames.end_times.txt')
         #   NOTE: Joules manual says times are written out in ns, but they are actually written in s
-        with fp_start.open('r') as f: start_ns = [int(round(float(t) * 1e9)) for t in f.read().split()]
-        with fp_end.open('r')   as f: end_ns   = [int(round(float(t) * 1e9)) for t in f.read().split()]
+        with fp_start.open('r') as f: start_ns = np.round(np.array([float(t) for t in f.read().split()]) * 1e9).astype(int)
+        with fp_end.open('r')   as f: end_ns   = np.round(np.array([float(t) for t in f.read().split()]) * 1e9).astype(int)
         index = pd.MultiIndex.from_arrays([time_ns,start_ns,end_ns],names=['time_ns','start_ns','end_ns'])
 
         # create dataframe

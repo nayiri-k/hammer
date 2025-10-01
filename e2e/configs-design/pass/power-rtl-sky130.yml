@@ -14,7 +14,7 @@ power.inputs:
       report_stem: output.num_toggles-1
       output_formats:
       - all
-    # the following two should produce equivalent results:
+    # should produce equivalent results:
     - waveform_path: "build-sky130-cm/pass/sim-rtl-rundir/output.fsdb"
       interval_size: 10ns
       report_stem: output.interval_size-10ns
