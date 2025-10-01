@@ -8,9 +8,13 @@ power.inputs:
   waveforms: ["build-sky130-cm/pass/sim-rtl-rundir/output.fsdb"]
   report_configs:
     - waveform_path: "build-sky130-cm/pass/sim-rtl-rundir/output.fsdb"
-      # specify either interval_size or toggle_signal+num_toggles
-      # interval_size: 2.5ns
       toggle_signal: clock
       num_toggles: 1
       output_formats:
       - all
+    # the following two should produce equivalent results:
+    - waveform_path: "build-sky130-cm/pass/sim-rtl-rundir/output.fsdb"
+      interval_size: 10ns
+      report_stem: output.interval_size-10ns
+      output_formats:
+      - profile
