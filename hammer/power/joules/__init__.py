@@ -244,15 +244,17 @@ class Joules(HammerPowerTool, CadenceTool):
         new_stim = not (alias in self.stim_aliases)
         self.stim_aliases = self.stim_aliases + [alias]
         return alias, new_stim
+        
     
     def configs_to_cmds(self):
         tb_dut = self.tb_dut.replace(".", "/")
         power_report_configs = []
-        # create power report config for each waveform
-        for waveform in self.waveforms:
+        saifs = self.get_setting("power.inputs.saifs")
+        # create power report config for each waveform/SAIF file
+        for sim_file in self.waveforms + saifs:
             power_report_configs.append(
                 PowerReport(
-                    waveform_path=waveform,
+                    waveform_path=sim_file,
                     inst=None, module=None,
                     levels=None,
                     start_time=None, end_time=None,
@@ -262,7 +264,7 @@ class Joules(HammerPowerTool, CadenceTool):
                     frame_count=None,
                     power_type=None,
                     report_stem=None,
-                    output_formats=None))
+                    output_formats=['report']))
         power_report_configs += self.get_power_report_configs() # append report configs from yaml file
 
         all_power_report_cfgs = []
@@ -305,24 +307,34 @@ class Joules(HammerPowerTool, CadenceTool):
                 mode = "time_based" if time_based_analysis else "average"
                 cfg['compute_power_cmd'] = f"compute_power -mode {mode} -stim {stim_alias} -append"
 
-            waveform_name = '.'.join(os.path.basename(report.waveform_path).split('.')[0:-1])  # remove only file extension (last .*) in filename
-            cfg['waveform_name'] = waveform_name
-
             inst_str = f"-inst {report.inst}" if report.inst else ""
             module_str = f"-module {report.module}" if report.module else ""
             levels_str = f"-levels {report.levels}" if report.levels else ""
             type_str = f"-types {report.power_type}" if report.power_type else "-types total"
             output_formats = set(report.output_formats) if report.output_formats else {'report'}  
 
-            report_stem = waveform_name if report.report_stem is None else report.report_stem
+            report_stem = os.path.basename(report.waveform_path) if report.report_stem is None else report.report_stem
 
-            if not report_stem.startswith('/'):
-                save_dir = os.path.join(self.run_dir, 'reports')
-                os.makedirs(save_dir, exist_ok=True)
-                report_stem = os.path.join(save_dir, report_stem)              
+            if not report_stem.startswith('/'):  # get absolute path
+                save_dir = Path(self.run_dir)/"reports"
+                save_dir.mkdir(exist_ok=True,parents=True)
+                report_stem = str(save_dir/report_stem)
 
             # NOTE: for parsing power reports, we assume last argument in each cmd is the output filepath
             cmds = []
+
+            # write out start/end times for time-based analysis
+            #   NOTE: Joules manual says times are written out in ns, but they are actually written in s
+            if time_based_analysis:
+                cmds.append(f"set frames [get_sdb_frames -stim {stim_alias}]")
+                cmds.append(f"set st [open \"{report_stem}.frames.start_times.txt\" w]")
+                cmds.append(f"set et [open \"{report_stem}.frames.end_times.txt\" w]")
+                cmds.append(f"set dt [open \"{report_stem}.frames.duration.txt\" w]")
+                cmds.append("foreach frame $frames {puts $st [get_frame_info -frame $frame -start_time]}")
+                cmds.append("foreach frame $frames {puts $et [get_frame_info -frame $frame -end_time]}")
+                cmds.append("foreach frame $frames {puts $dt [get_frame_info -frame $frame -duration]}")
+                cmds.append("close $st; close $et; close $dt")
+
             # use set intersection to determine whether two lists have at least one element in common
             if {'report','all'} & output_formats:
                 h_levels_str = "-levels all" if levels_str == "" else levels_str
@@ -347,23 +359,13 @@ class Joules(HammerPowerTool, CadenceTool):
                     self.logger.error("Must specify either interval_size or toggle_signal+num_toggles in power.inputs.report_configs to generate write_profile report (frame-based analysis).")
                     return False
                 root_str = inst_str.replace('-inst','-root')
-                cmds.append(f"write_power_profile -stims {stim_alias} {root_str} {levels_str} -unit mW -format fsdb -out {report_stem}.profile.fsdb")
+                cmds.append(f"write_power_profile -stims {stim_alias} {root_str} {levels_str} -unit mW -format fsdb -out {report_stem}.profile")
             
             cfg['report_cmds'] = cmds
 
             all_power_report_cfgs.append(cfg)
     
-        saifs = self.get_setting("power.inputs.saifs")
-        for saif in saifs:
-            cfg = {}
-            abspath_saif = os.path.join(os.getcwd(), saif)
-            stim_alias = Path(saif).name
-            cfg['waveform_name'] = stim_alias
-            cfg['read_stim_cmd'] = f"read_stimulus -file {abspath_saif} -dut_instance {self.tb_name}/{tb_dut} -alias {stim_alias} -append"
-            cfg['compute_power_cmd'] = f"compute_power -mode time_based -stim {stim_alias}"
-            cfg['report_cmds'] = [f"report_power -stims {stim_alias} -indent_inst -unit mW -out {stim_alias}.rpt"]
-            all_power_report_cfgs.append(cfg)
-        
+
         return all_power_report_cfgs
 
 
@@ -391,11 +393,12 @@ class Joules(HammerPowerTool, CadenceTool):
         for cfg in power_cfgs:
             if 'report_cmds' not in cfg: continue
             for cmd in cfg['report_cmds']:
-                fp = Path(cmd.split()[-1])
+                if (' -out ' not in cmd) and (' > ' not in cmd): continue
+                fp = Path(cmd.split(' -out ')[-1].split(' > ')[-1])
                 fpn = fp.name
 
                 fp_data = fp.with_suffix(fp.suffix+'.data')
-                if ('.profile.' in fpn) and fp_data.exists():
+                if ('.profile' in fpn) and fp_data.exists():
                     fp_in = fp_data
                     func = PowerParser.profiledata_to_df
                 # TODO: add more parsing utilities here
@@ -406,12 +409,13 @@ class Joules(HammerPowerTool, CadenceTool):
                 try:
                     dp_out = fp_in.parent/"parsed"
                     dp_out.mkdir(exist_ok=True,parents=True)
-                    df = func(fp_in,**cfg)
+                    df = func(fp_in)
                     fp_out = dp_out/(fp_in.name+'.csv')
                     df.to_csv(fp_out,sep=',')
                     self.logger.info(f"Parsed {fp_in} -> {fp_out}")
-                except:
+                except Exception as e:
                     import inspect
+                    print(e)
                     self.logger.warning(f"Error with function {func.__name__} parsing output file {fp_in}, fix in {inspect.getfile(func)}")
 
         return True

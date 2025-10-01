@@ -8,12 +8,7 @@ import pandas as pd
 
 class PowerParser():
 
-    def profiledata_to_df(joules_fpath: Path,
-                            **kwargs):
-        # function arguments
-        interval_ns = float(kwargs['interval_ns']) if 'interval_ns' in kwargs else None
-        num_toggles = int(kwargs['num_toggles']) if 'num_toggles' in kwargs else None
-        frame_count = int(kwargs['frame_count']) if 'frame_count' in kwargs else None
+    def profiledata_to_df(joules_fpath: Path):
 
         # parse file
         with open(joules_fpath,'r') as f:
@@ -37,7 +32,7 @@ class PowerParser():
         col_names = ['hier','power_category','power_type']
         columns = pd.MultiIndex.from_arrays([col_hiers,col_powcat,col_powtype],names=col_names)
 
-        # extract time and power units        
+        # extract time/power units        
         l = [f for f in header_fields if f.startswith('xlabel')][0]
         time_unit = l[l.index('(')+1:l.index(')')]
         l = [f for f in header_fields if f.startswith('ylabel')][0]
@@ -51,15 +46,11 @@ class PowerParser():
         power = np.round(np.array([[float(p) for p in l[1:]] for l in time_power]) / powerscaling)
 
         # generate index
-        if frame_count is not None:
-            interval_ns = np.median(time_ns[1:101] - time_ns[:100])  # sufficient to compute for first 100 elements
-        if interval_ns is not None:
-            start_ns = time_ns - int(interval_ns//2)
-            end_ns = time_ns + int(interval_ns//2)
-        else:
-            #   num_toggles estimates start/end time b/c we don't have info about toggle_signal...
-            start_ns = [0] + list(((time_ns[1:] + time_ns[:-1])/2).astype(int))
-            end_ns = list(((time_ns[1:] + time_ns[:-1])/2).astype(int)) + [time_ns[-1]]
+        fp_start = Path(str(joules_fpath).split('.profile.')[0]+'.frames.start_times.txt')
+        fp_end = Path(str(joules_fpath).split('.profile.')[0]+'.frames.end_times.txt')
+        #   NOTE: Joules manual says times are written out in ns, but they are actually written in s
+        with fp_start.open('r') as f: start_ns = [int(round(float(t) * 1e9)) for t in f.read().split()]
+        with fp_end.open('r')   as f: end_ns   = [int(round(float(t) * 1e9)) for t in f.read().split()]
         index = pd.MultiIndex.from_arrays([time_ns,start_ns,end_ns],names=['time_ns','start_ns','end_ns'])
 
         # create dataframe

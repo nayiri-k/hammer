@@ -6,10 +6,12 @@ power.inputs:
   level: "rtl"
   input_files: ["src/pass.v"]
   waveforms: ["build-sky130-cm/pass/sim-rtl-rundir/output.fsdb"]
+  saifs: ["build-sky130-cm/pass/sim-rtl-rundir/ucli.saif"]
   report_configs:
     - waveform_path: "build-sky130-cm/pass/sim-rtl-rundir/output.fsdb"
       toggle_signal: clock
       num_toggles: 1
+      report_stem: output.num_toggles-1
       output_formats:
       - all
     # the following two should produce equivalent results:
