@@ -396,18 +396,19 @@ class Joules(HammerPowerTool, CadenceTool):
             if 'report_cmds' not in cfg: continue
             for cmd in cfg['report_cmds']:
                 if (' -out ' not in cmd) and (' > ' not in cmd): continue
-                fp = Path(cmd.split(' -out ')[-1].split(' > ')[-1])
-                fpn = fp.name
-
-                fp_data = fp.with_suffix(fp.suffix+'.data')
-                if ('.profile' in fpn) and fp_data.exists():
-                    fp_in = fp_data
-                    func = PowerParser.profiledata_to_df
-                if fpn.endswith('.png'):
+                fp_in = Path(cmd.split(' -out ')[-1].split(' > ')[-1])
+                if not fp_in.is_absolute(): fp_in = Path(self.run_dir)/fp_in
+                profile = ('.profile' in fp_in.name)
+                if profile:
+                    fp_in = fp_in.with_suffix(fp_in.suffix+'.data')
+                if not fp_in.exists():
+                    self.logger.warning(f"Output file does not exist, {fp_in}")
                     continue
+                if profile:
+                    func = PowerParser.profiledata_to_df
                 # TODO: add more parsing utilities here
                 else:
-                    self.logger.warning(f"No method to parse report file {fp}")
+                    self.logger.warning(f"No method to parse report file {fp_in}")
                     continue
                 try:
                     dp_out = fp_in.parent/"parsed"
@@ -467,7 +468,7 @@ class Joules(HammerPowerTool, CadenceTool):
         HammerVLSILogging.enable_colour = False
         HammerVLSILogging.enable_tag = False
 
-        output = self.run_executable(args, cwd=self.run_dir)
+        # output = self.run_executable(args, cwd=self.run_dir)
 
         self.parse_power()
 
