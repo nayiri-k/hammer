@@ -1669,8 +1669,9 @@ class HammerPowerTool(HammerTool):
         configs = self.get_setting("power.inputs.report_configs")
         output = []
         for config in configs:
+            assert 'waveform_path' in config, f"Required waveform_path missing in config {config}"
             report = PowerReport(
-                waveform_path=config["waveform_path"],
+                waveform_path=config['waveform_path'],
                 report_stem=None,
                 output_formats=None,
                 inst=None, module=None,
