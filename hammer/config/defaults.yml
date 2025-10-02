@@ -912,6 +912,9 @@ power.inputs:
   #       "write_profile" - profiles all power types on all categories for all the sub-hierarchies for a given design instance (*.fsdb)
   #       "profile" - run plot_profile + dump_profile
   #       "all" - generate all of the above report formats
+  ### Expert Settings:
+  #   tcl_cmd (str)  - Optional. Additional TCL command to run. The only args passed are tcl_args and stim alias.
+  #   tcl_args (str) - Optional. Additional power report command arguments, applied to all output_formats generation commands.
 
   # examples:
   #   report_configs: [{waveform_path: "/path/to/fsdb", module: "chiptop", levels:3, start_time: "0ns", end_time: "1ns", toggle_signal:"/ChipTop/clock", num_toggles:1, frame_count:1000, report_stem: "my_fsdb_report"}]

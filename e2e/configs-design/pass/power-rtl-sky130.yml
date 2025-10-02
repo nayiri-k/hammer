@@ -19,4 +19,18 @@ power.inputs:
       interval_size: 10ns
       report_stem: output.interval_size-10ns
       output_formats:
-      - profile
+      - plot_profile
+    - waveform_path: "build-sky130-cm/pass/sim-rtl-rundir/output.fsdb"
+      interval_list: "10ns 10ns 10ns 10ns 10ns"
+      report_stem: output.intervals_list_1
+      output_formats:
+      - plot_profile
+    - waveform_path: "build-sky130-cm/pass/sim-rtl-rundir/output.fsdb"
+      interval_list: "0:10ns 10ns:20ns 20ns:30ns 30ns:40ns 40ns:50ns"
+      report_stem: output.intervals_list_2
+      output_formats:
+      - plot_profile
+    - waveform_path: "build-sky130-cm/pass/sim-rtl-rundir/output.fsdb"
+      interval_size: 10ns
+      tcl_cmd: "plot_power_profile"
+      tcl_args: "-by_category {total} -types total -unit mW -format png -out reports/output.custom_tcl.profile.png"

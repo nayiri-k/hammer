@@ -48,9 +48,14 @@ class PowerParser():
         # generate index
         fp_start = Path(str(joules_fpath).split('.profile.')[0]+'.frames.start_times.txt')
         fp_end = Path(str(joules_fpath).split('.profile.')[0]+'.frames.end_times.txt')
-        #   NOTE: Joules manual says times are written out in ns, but they are actually written in s
-        with fp_start.open('r') as f: start_ns = np.round(np.array([float(t) for t in f.read().split()]) * 1e9).astype(int)
-        with fp_end.open('r')   as f: end_ns   = np.round(np.array([float(t) for t in f.read().split()]) * 1e9).astype(int)
+        if fp_start.exists() and fp_end.exists():
+            #   NOTE: Joules manual says times are written out in ns, but they are actually written in s
+            with fp_start.open('r') as f: start_ns = np.round(np.array([float(t) for t in f.read().split()]) * 1e9).astype(int)
+            with fp_end.open('r')   as f: end_ns   = np.round(np.array([float(t) for t in f.read().split()]) * 1e9).astype(int)
+        else:
+            midpoints = list((time_ns[1:] + time_ns[:-1])/2)
+            start_ns = [np.nan] + midpoints
+            end_ns = midpoints + [np.nan]
         index = pd.MultiIndex.from_arrays([time_ns,start_ns,end_ns],names=['time_ns','start_ns','end_ns'])
 
         # create dataframe
