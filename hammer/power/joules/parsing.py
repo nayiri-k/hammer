@@ -14,12 +14,12 @@ class PowerParser():
         with open(joules_fpath,'r') as f:
             lines = f.readlines()
         header = None
-        if len(lines) == 0: return None
-        while lines[0].startswith('# '):
-            header = lines.pop(0)
-            if len(lines) == 0: return None
+        if len(lines) > 0:
+            while lines[0].startswith('# '):
+                header = lines.pop(0)
+                if len(lines) == 0: break
         if header is None: 
-            # joules.logger.warning(f"# Incomplete file at {joules_fpath}\n")
+            print(f"# Incomplete file at {joules_fpath}\n")
             return None
         header_fields = header.split(' -')
 

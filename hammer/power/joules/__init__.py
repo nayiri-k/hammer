@@ -266,9 +266,9 @@ class Joules(HammerPowerTool, CadenceTool):
             read_stim_cmd = f"read_stimulus -file {abspath_waveform} -dut_instance {self.tb_name}/{tb_dut}"
 
             if report.start_time:
-                read_stim_cmd += " -start {STIME}ns".format(STIME=report.start_time.value_in_units("ns"))
+                read_stim_cmd += f" -start {report.start_time.value_in_units('ns')}ns"
             if report.end_time:
-                read_stim_cmd += " -end {ETIME}ns".format(ETIME=report.end_time.value_in_units("ns"))
+                read_stim_cmd += f" -end {report.end_time.value_in_units('ns')}ns"
 
             # Time-based analysis
             time_based_cfgs = [report.interval_size, report.interval_list, report.num_toggles, report.frame_count]
@@ -414,13 +414,13 @@ class Joules(HammerPowerTool, CadenceTool):
                     dp_out = fp_in.parent/"parsed"
                     dp_out.mkdir(exist_ok=True,parents=True)
                     df = func(fp_in)
-                    fp_out = dp_out/(fp_in.name+'.csv')
-                    df.to_csv(fp_out,sep=',')
+                    fp_out = dp_out/(fp_in.name+'.csv.gz')
+                    df.to_csv(fp_out,sep=',',compression='gzip')
                     self.logger.info(f"Parsed {fp_in} -> {fp_out}")
                 except Exception as e:
                     import inspect
-                    print(e)
                     self.logger.warning(f"Error with function {func.__name__} parsing output file {fp_in}, fix in {inspect.getfile(func)}")
+                    self.logger.warning(str(e))
 
         return True
 
@@ -462,6 +462,7 @@ class Joules(HammerPowerTool, CadenceTool):
             self.get_setting("power.joules.joules_bin"),
             "-files", joules_tcl_filename,
             "-common_ui",
+            "-no_gui",
             "-batch"
         ]
 
