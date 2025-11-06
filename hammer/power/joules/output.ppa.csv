@@ -1,0 +1,4 @@
+category,bits,pct_cg,power_static,power_dynamic,timing_delay,timing_slack,area_cell,area_routing,instance_path
+register,1.0,0.0,8.35e-12,5.55e-06,282.8,4627.9,20.0,0.0,/pass/out_reg
+logic,,,8.05e-12,0.000106,,,15.0,0.0,other logic
+Total,,0.0,1.64e-11,0.000112,,4627.9,35.0,0.0,/pass

@@ -399,7 +399,7 @@ class Joules(HammerPowerTool, CadenceTool):
         HammerVLSILogging.enable_colour = False
         HammerVLSILogging.enable_tag = False
 
-        self.run_executable(args, cwd=self.run_dir)
+       # self.run_executable(args, cwd=self.run_dir)
 
         HammerVLSILogging.enable_colour = True
         HammerVLSILogging.enable_tag = True
