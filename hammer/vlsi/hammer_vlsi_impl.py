@@ -93,7 +93,10 @@ PowerReport = NamedTuple('PowerReport', [
     ('num_toggles', Optional[int]),
     ('frame_count', Optional[int]),
     ('power_type', Optional[int]),
-    ('output_formats', Optional[List[str]])
+    ('output_formats', Optional[List[str]]),
+    ('tcl_cmd', Optional[str]),
+    ('tcl_args', Optional[str]),
+
 ])
 
 
@@ -1666,8 +1669,9 @@ class HammerPowerTool(HammerTool):
         configs = self.get_setting("power.inputs.report_configs")
         output = []
         for config in configs:
+            assert 'waveform_path' in config, f"Required waveform_path missing in config {config}"
             report = PowerReport(
-                waveform_path=config["waveform_path"],
+                waveform_path=config['waveform_path'],
                 report_stem=None,
                 output_formats=None,
                 inst=None, module=None,
@@ -1677,8 +1681,10 @@ class HammerPowerTool(HammerTool):
                 interval_size=None,
                 interval_list=None,
                 toggle_signal=None, num_toggles=None,
-                power_type=None,
                 frame_count=None,
+                power_type=None,
+                tcl_cmd=None,tcl_args=None,
+                
             )
             if "inst" in config:
                 report = report._replace(inst=config["inst"])
@@ -1706,6 +1712,10 @@ class HammerPowerTool(HammerTool):
                 report = report._replace(power_type=config["power_type"])
             if "output_formats" in config:
                 report = report._replace(output_formats=config["output_formats"])
+            if "tcl_cmd" in config:
+                report = report._replace(tcl_cmd=config["tcl_cmd"])
+            if "tcl_args" in config:
+                report = report._replace(tcl_args=config["tcl_args"])
             output.append(report)
         return output
 

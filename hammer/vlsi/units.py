@@ -278,6 +278,24 @@ class VoltageValue(ValueWithUnit):
         return "voltage"
 
 
+class PowerValue(ValueWithUnit):
+    """Power value - e.g. "0.95 W", "950 mW".
+    """
+
+    @property
+    def default_prefix(self) -> str:
+        """Default prefix: mW (e.g. "0.1" -> 0.1 mW)."""
+        return "m"
+
+    @property
+    def unit(self) -> str:
+        return "W"
+
+    @property
+    def unit_type(self) -> str:
+        return "power"
+
+
 class TemperatureValue(ValueWithUnit):
     """Temperature value in Celsius - e.g. "25 C", "125 C".
     Mainly used for specifying corners for MMMC.
@@ -294,7 +312,7 @@ class TemperatureValue(ValueWithUnit):
 
     @property
     def unit_type(self) -> str:
-        return "voltage"
+        return "temperature"
 
 
 class CapacitanceValue(ValueWithUnit):

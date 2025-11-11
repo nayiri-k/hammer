@@ -12,12 +12,16 @@ import os
 import errno
 from textwrap import dedent
 from datetime import datetime
+from pathlib import Path
+import pandas as pd
 
 from hammer.vlsi import HammerPowerTool, HammerToolStep, HammerToolHookAction, HammerTool, \
                         MMMCCornerType, FlowLevel, PowerReport
 from hammer.logging import HammerVLSILogging
 
 from hammer.common.cadence import CadenceTool
+
+from .parsing import PowerParser
 
 class Joules(HammerPowerTool, CadenceTool):
 
@@ -207,57 +211,40 @@ class Joules(HammerPowerTool, CadenceTool):
 
 
     @property
-    def stim_aliases(self) -> List[str]:
+    def all_stim_cmds(self) -> List[str]:
         """
-        Private helper property to keep track of which stimuli aliases have already been read
+        Private helper property to keep track of which stimulus commands have already been run
         """
-        return self.attr_getter("__stim_aliases", [])
-    @stim_aliases.setter
-    def stim_aliases(self, value: List[str]) -> None:
-        self.attr_setter("__stim_aliases", value)
+        return self.attr_getter("__all_stim_cmds", [])
+    @all_stim_cmds.setter
+    def all_stim_cmds(self, value: List[str]) -> None:
+        self.attr_setter("__all_stim_cmds", value)
 
-    def get_alias_name(self, read_stim_cmd) -> Tuple[str, bool]:
+    def generate_alias(self, read_stim_cmd) -> Tuple[str, bool]:
         """
         Return Tuple(
-            stim alias, 
-            whether we already ran read_stim for this waveform
-                - this is determined by alias name, which contains all possible 
-                  arguments to read_stim that are currently supported by this plugin
+            stim alias,
+            whether we already ran read_stimulus for this waveform
         )
-
-            stim alias parsing notes:
-                - replace . with _ to disambiguate stimulus name with any file extension
-                - replace - with _ to avoid errors with reading the cached stimulus (write_sdb -> read_stim)
-                    (Joules throws an error when trying to read an SDB file where the stimulus ID contained dashes)
         """
-        cmds = read_stim_cmd.split()
-        idx_waveform = cmds.index('-file')+1
-        waveform_path = cmds[idx_waveform]
-        waveform = os.path.basename(waveform_path)
-        alias = waveform + "_".join(cmds[idx_waveform+1:])
-        for c in "./-": # symbols that will likely cause an error
-            alias = alias.replace(c,'_')
-        new_stim = not (alias in self.stim_aliases)
-        self.stim_aliases = self.stim_aliases + [alias]
-        return alias, new_stim
+        new_stim = not (read_stim_cmd in self.all_stim_cmds)
+        if new_stim:
+            alias = len(self.all_stim_cmds)
+            self.all_stim_cmds = self.all_stim_cmds + [read_stim_cmd]
+        else:
+            alias = self.all_stim_cmds.index(read_stim_cmd)
+        return f"stim{alias}", new_stim
+
     
-
-    def report_power(self) -> bool:
-        block_append = self.block_append
-        top_module = self.get_setting("power.inputs.top_module")
-        # Replace . to / formatting in case argument passed from sim tool
+    def configs_to_cmds(self):
         tb_dut = self.tb_dut.replace(".", "/")
-
-        # Fixes issues seen with several different reporting commands
-        self.block_append("read_db pre_report_power")
-
         power_report_configs = []
-        # create power report config for each waveform
-        for waveform in self.waveforms:
-            waveform_name = '.'.join(os.path.basename(waveform).split('.')[0:-1])
+        saifs = self.get_setting("power.inputs.saifs")
+        # create power report config for each waveform/SAIF file
+        for sim_file in self.waveforms + saifs:
             power_report_configs.append(
                 PowerReport(
-                    waveform_path=waveform,
+                    waveform_path=sim_file,
                     inst=None, module=None,
                     levels=None,
                     start_time=None, end_time=None,
@@ -267,91 +254,173 @@ class Joules(HammerPowerTool, CadenceTool):
                     frame_count=None,
                     power_type=None,
                     report_stem=None,
-                    output_formats=['report']))
+                    output_formats=['report'],
+                    tcl_cmd=None,tcl_args=None,
+                    ))
         power_report_configs += self.get_power_report_configs() # append report configs from yaml file
+
+        all_power_report_cfgs = []
         for report in power_report_configs:
+            cfg = {}
             abspath_waveform = os.path.join(os.getcwd(), report.waveform_path)
             read_stim_cmd = f"read_stimulus -file {abspath_waveform} -dut_instance {self.tb_name}/{tb_dut}"
 
             if report.start_time:
-                read_stim_cmd += " -start {STIME}ns".format(STIME=report.start_time.value_in_units("ns"))
+                read_stim_cmd += f" -start {report.start_time.value_in_units('ns')}ns"
             if report.end_time:
-                read_stim_cmd += " -end {ETIME}ns".format(ETIME=report.end_time.value_in_units("ns"))
+                read_stim_cmd += f" -end {report.end_time.value_in_units('ns')}ns"
 
-            time_based_analysis = (report.interval_size or (report.toggle_signal and report.num_toggles))
+            # Time-based analysis
+            time_based_cfgs = [report.interval_size, report.interval_list, report.num_toggles, report.frame_count]
+            time_based_cfgs = [(val is not None) for val in time_based_cfgs]
+            time_based_analysis = any(time_based_cfgs)
+            if sum(time_based_cfgs) > 1:
+                self.logger.warning("More than one time-based analysis specified, using first one in {interval_size, interval_list, toggle_signal/num_toggles, frame_count}")
+    
             if report.interval_size:
-                read_stim_cmd += " -interval_size {INTERVAL}ns".format(INTERVAL=report.interval_size.value_in_units("ns"))
-                if report.toggle_signal:
-                    self.logger.warning("Both interval_size and toggle_signal/num_toggles specified...only using interval_size for frame-based analysis.")
-            elif report.toggle_signal:
-                if report.num_toggles:
-                    read_stim_cmd += " -cycles {NUM} {SIGNAL}".format(NUM=report.num_toggles, SIGNAL=report.toggle_signal)
-                else:
-                    self.logger.error("Must specify the number of toggles if the toggle signal is specified.")
-                    return False
+                read_stim_cmd += f" -interval_size {report.interval_size.value_in_units('ns')}ns"
+            elif report.interval_list:
+                read_stim_cmd += f" -interval_list {report.interval_list}"
+            elif report.num_toggles:
+                toggle_signal = report.toggle_signal
+                if toggle_signal is None:
+                    toggle_signal = self.get_clock_ports()[0]
+                    self.logger.warning(f"Unspecified toggle_signal for num_toggles, using {toggle_signal} signal")
+                read_stim_cmd += f" -cycles {report.num_toggles} {toggle_signal}"
+            elif report.frame_count:
+                read_stim_cmd += f" -frame_count {report.frame_count}"
 
-            if report.frame_count:
-                read_stim_cmd += " -frame_count {FRAME_COUNT}".format(FRAME_COUNT=report.frame_count)
-
-            stim_alias, new_stim = self.get_alias_name(read_stim_cmd)
-
+            # Read stimulus + compute power
+            stim_alias, new_stim = self.generate_alias(read_stim_cmd)
+            cfg['read_stim_cmd'] = ""
             if new_stim:
-                block_append(f"{read_stim_cmd} -alias {stim_alias} -append")
+                cfg['read_stim_cmd'] = f"{read_stim_cmd} -alias {stim_alias} -append"
                 # block_append(f"write_sdb -out {alias}.sdb") # NOTE: subsequent read_sdb command errors when reading this file back in, so don't cache for now
                 mode = "time_based" if time_based_analysis else "average"
-                block_append(f"compute_power -mode {mode} -stim {stim_alias} -append")
+                cfg['compute_power_cmd'] = f"compute_power -mode {mode} -stim {stim_alias} -append"
 
-            # remove only file extension (last .*) in filename
-            waveform_name = '.'.join(os.path.basename(report.waveform_path).split('.')[0:-1])
+            inst_str = f"-inst {report.inst}" if report.inst is not None else ""
+            module_str = f"-module {report.module}" if report.module is not None else ""
+            levels_str = f"-levels {report.levels}" if report.levels is not None else ""
+            type_str = f"-types {report.power_type}" if report.power_type is not None else "-types total"
+            if report.output_formats is None:
+                output_formats = {'report'} if report.tcl_args is None else set()
+            else:
+                output_formats = set(report.output_formats)
+            tcl_args = report.tcl_args if report.tcl_args is not None else ""
 
-            inst_str = f"-inst {report.inst}" if report.inst else ""
-            module_str = f"-module {report.module}" if report.module else ""
-            levels_str = f"-levels {report.levels}" if report.levels else ""
-            type_str = f"-types {report.power_type}" if report.power_type else "-types total"
-            output_formats = set(report.output_formats) if report.output_formats else {'report'}  
+            report_stem = os.path.basename(report.waveform_path) if report.report_stem is None else report.report_stem
 
-            report_stem = waveform_name if report.report_stem is None else report.report_stem
-            print(report_stem)
-            if not report_stem.startswith('/'):
-                save_dir = os.path.join(self.run_dir, 'reports')
-                os.makedirs(save_dir, exist_ok=True)
-                report_stem = os.path.join(save_dir, report_stem)              
+            if not report_stem.startswith('/'):  # get absolute path
+                save_dir = Path(self.run_dir)/"reports"
+                save_dir.mkdir(exist_ok=True,parents=True)
+                report_stem = str(save_dir/report_stem)
 
-            # frames TCL variable to be used across different commands
-            self.append(f"set frames [get_sdb_frames -stims {stim_alias}]")
-            # NOTE: including the '-frames $frames ' argument results in this Joules error: "Error: Cannot specify frame#0 if other frames are specified with -frames.""
+            # NOTE: for parsing power reports, we assume last argument in each cmd is the output filepath
+            cmds = []
+
+            # write out start/end times for frames analyzed
+            #   NOTE: Joules manual says times are written out in ns, but they are actually written in s
+            cfg['read_stim_cmd'] += f"\ndump_frame_info {stim_alias} {report_stem}"
 
             # use set intersection to determine whether two lists have at least one element in common
             if {'report','all'} & output_formats:
-                # -frames $frames explodes the runtime & doesn't seem to change result
                 h_levels_str = "-levels all" if levels_str == "" else levels_str
-                self.block_append(f"report_power -stims {stim_alias} {inst_str} {module_str} {levels_str} -unit mW -out {report_stem}.power.rpt")
-                self.block_append(f"report_power -stims {stim_alias} {inst_str} {module_str} {levels_str} -by_hierarchy {h_levels_str} -unit mW -out {report_stem}.hier.power.rpt")
+                cmds.append(f"report_power -stims {stim_alias} {inst_str} {module_str} {levels_str} -unit mW {tcl_args} -out {report_stem}.power.rpt")
+                cmds.append(f"report_power -stims {stim_alias} {inst_str} {module_str} {levels_str} -by_hierarchy {h_levels_str} -unit mW {tcl_args} -out {report_stem}.hier.power.rpt")
             if {'activity','all'} & output_formats:
-                self.block_append(f"report_activity -stims {stim_alias} {inst_str} {module_str} {levels_str} -out {report_stem}.activity.rpt")
-                self.block_append(f"report_activity -stims {stim_alias} -by_hierarchy {levels_str} -out {report_stem}.hier.activity.rpt")
+                cmds.append(f"report_activity -stims {stim_alias} {inst_str} {module_str} {levels_str} {tcl_args} -out {report_stem}.activity.rpt")
+                cmds.append(f"report_activity -stims {stim_alias} -by_hierarchy {levels_str} {tcl_args} -out {report_stem}.hier.activity.rpt")
             if {'ppa','all'} & output_formats:
                 root_str = inst_str.replace('-inst','-root')
-                self.block_append(f"report_ppa {root_str} {module_str} > {report_stem}.ppa.rpt")
+                cmds.append(f"report_ppa {root_str} {module_str} {tcl_args} > {report_stem}.ppa.rpt")
             if {'area','all'} & output_formats:
-                self.block_append(f"report_area > {report_stem}.area.rpt")
+                cmds.append(f"report_area > {report_stem}.area.rpt")
             if {'plot_profile','profile','all'} & output_formats:
                 if not time_based_analysis:
                     self.logger.error("Must specify either interval_size or toggle_signal+num_toggles in power.inputs.report_configs to generate plot_profile report (frame-based analysis).")
                     return False
                 # NOTE: we don't include levels_str here bc category is total power anyways
-                self.block_append(f"plot_power_profile -stims {stim_alias} {inst_str} {module_str} {levels_str} -by_category {{total}} {type_str} -unit mW -format png -out {report_stem}.profile.png")
+                cmds.append(f"plot_power_profile -stims {stim_alias} {inst_str} {module_str} {levels_str} -by_category {{total}} {type_str} -unit mW -format png {tcl_args} -out {report_stem}.profile.png")
             if {'write_profile','profile','all'} & output_formats:
                 if not time_based_analysis:
                     self.logger.error("Must specify either interval_size or toggle_signal+num_toggles in power.inputs.report_configs to generate write_profile report (frame-based analysis).")
                     return False
-                block_append(f"write_power_profile -stims {stim_alias} -root [get_insts -rtl_type hier] {levels_str} -unit mW -format fsdb -out {report_stem}.profile.fsdb")
+                root_str = inst_str.replace('-inst','-root')
+                cmds.append(f"write_power_profile -stims {stim_alias} {root_str} {levels_str} -unit mW -format fsdb {tcl_args} -out {report_stem}.profile")
+            if report.tcl_cmd is not None:
+                cmds.append(f"{report.tcl_cmd} -stims {stim_alias} {tcl_args}")
 
-        saifs = self.get_setting("power.inputs.saifs")
-        for saif in saifs:
-            saif_basename = os.path.basename(saif)
-            block_append("compute_power -mode time_based -stim {SAIF}".format(SAIF=saif_basename))
-            block_append("report_power -stims {SAIF} -indent_inst -unit mW -out {SAIF}.report".format(SAIF=saif_basename))
+            cfg['report_cmds'] = cmds
+
+            all_power_report_cfgs.append(cfg)
+    
+
+        return all_power_report_cfgs
+
+
+    def report_power(self) -> bool:
+        power_cfgs = self.configs_to_cmds()
+
+        block_append = self.block_append
+ 
+        # Fixes issues seen with several different reporting commands
+        if "read_db pre_report_power" not in self.output: self.block_append("read_db pre_report_power")
+
+        proc = ["proc dump_frame_info {stim_alias report_stem} {"]
+        proc.append("    set frames [get_sdb_frames -stim $stim_alias]")
+        proc.append("    set st [open \"${report_stem}.frames.start_times.txt\" w]")
+        proc.append("    set et [open \"${report_stem}.frames.end_times.txt\" w]")
+        proc.append("    set dt [open \"${report_stem}.frames.duration.txt\" w]")
+        proc.append("    foreach frame $frames {puts $st [get_frame_info -frame $frame -start_time]}")
+        proc.append("    foreach frame $frames {puts $et [get_frame_info -frame $frame -end_time]}")
+        proc.append("    foreach frame $frames {puts $dt [get_frame_info -frame $frame -duration]}")
+        proc.append("    close $st; close $et; close $dt")
+        proc.append("}")
+        self.append('\n'.join(proc))
+
+        for cfg in power_cfgs:
+            if 'read_stim_cmd' in cfg:
+                block_append(cfg['read_stim_cmd'])
+            if 'compute_power_cmd' in cfg:
+                block_append(cfg['compute_power_cmd'])
+            if 'report_cmds' in cfg:
+                for cmd in cfg['report_cmds']:
+                    block_append(cmd)
+        return True
+    
+    def parse_power(self) -> bool:
+        power_cfgs = self.configs_to_cmds()
+        default = dict(interval_ns=None,num_toggles=None,frame_count=None)
+        for cfg in power_cfgs:
+            if 'report_cmds' not in cfg: continue
+            for cmd in cfg['report_cmds']:
+                if (' -out ' not in cmd) and (' > ' not in cmd): continue
+                fp_in = Path(cmd.split(' -out ')[-1].split(' > ')[-1])
+                if not fp_in.is_absolute(): fp_in = Path(self.run_dir)/fp_in
+                profile = ('.profile' in fp_in.name)
+                if profile:
+                    fp_in = fp_in.with_suffix(fp_in.suffix+'.data')
+                if not fp_in.exists():
+                    self.logger.warning(f"Output file does not exist, {fp_in}")
+                    continue
+                if profile:
+                    func = PowerParser.profiledata_to_df
+                # TODO: add more parsing utilities here
+                else:
+                    self.logger.warning(f"No method to parse report file {fp_in}")
+                    continue
+                try:
+                    dp_out = fp_in.parent/"parsed"
+                    dp_out.mkdir(exist_ok=True,parents=True)
+                    df = func(fp_in)
+                    fp_out = dp_out/(fp_in.name+'.csv.gz')
+                    df.to_csv(fp_out,sep=',',compression='gzip')
+                    self.logger.info(f"Parsed {fp_in} -> {fp_out}")
+                except Exception as e:
+                    import inspect
+                    self.logger.warning(f"Error with function {func.__name__} parsing output file {fp_in}, fix in {inspect.getfile(func)}")
+                    self.logger.warning(str(e))
 
         return True
 
@@ -393,13 +462,20 @@ class Joules(HammerPowerTool, CadenceTool):
             self.get_setting("power.joules.joules_bin"),
             "-files", joules_tcl_filename,
             "-common_ui",
+            "-no_gui",
             "-batch"
         ]
 
         HammerVLSILogging.enable_colour = False
         HammerVLSILogging.enable_tag = False
 
+<<<<<<< HEAD
        # self.run_executable(args, cwd=self.run_dir)
+=======
+        output = self.run_executable(args, cwd=self.run_dir)
+
+        self.parse_power()
+>>>>>>> 8d32ec3141997550ae0f5aa69d67a5f33711aa90
 
         HammerVLSILogging.enable_colour = True
         HammerVLSILogging.enable_tag = True

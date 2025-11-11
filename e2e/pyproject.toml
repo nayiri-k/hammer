@@ -11,6 +11,7 @@ repository = "https://github.com/ucb-bar/hammer"
 python = "^3.9"
 hammer-vlsi = {path = "../.", extras = ["asap7"], develop = true}
 hammer-mentor-plugins = {path = "hammer-mentor-plugins", develop = true}
+pandas = "^2.3.3"
 
 [build-system]
 requires = ["poetry-core>=1.0.8", "setuptools>=65.3"]
